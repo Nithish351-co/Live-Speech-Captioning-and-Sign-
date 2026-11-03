@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>ARSIGN Phone</title>
+<link rel="icon" href="data:,">
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
+<style>
+  :root {
+    --bg: #0b1020; --panel: rgba(16, 22, 44, .82); --line: rgba(255,255,255,.12);
+    --text: #f2f5ff; --muted: #9aa6c8; --accent: #5eead4; --warn: #fbbf24; --bad: #fb7185;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+  #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+  body.cam #cam { display: block; }
+  body:not(.cam) { background: radial-gradient(120% 80% at 50% 0%, #1b2550 0%, #0b1020 60%); }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column;
+    padding: max(10px, env(safe-area-inset-top)) 14px max(10px, env(safe-area-inset-bottom)); gap: 10px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); flex: none; }
+  #dot.on { background: var(--accent); }
+  #status { flex: 1; font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header button { background: none; border: 1px solid var(--line); color: var(--text); border-radius: 10px;
+    padding: 6px 10px; font-size: 14px; }
+
+  #settings { display: none; padding: 10px 12px; gap: 8px; grid-template-columns: 1fr 1fr; }
+  #settings.open { display: grid; }
+  #settings label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  #settings select { background: #121a38; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font-size: 15px; }
+  #settings .wide { grid-column: 1 / -1; }
+  #settings button { grid-column: 1 / -1; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: #121a38; color: var(--text); font-size: 14px; }
+  #note { grid-column: 1 / -1; font-size: 12px; color: var(--warn); min-height: 1em; }
+
+  #stage { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 10px; gap: 6px; text-align: center; }
+  #sign { width: min(56vw, 280px); height: min(24vh, 220px); min-height: 160px; flex: none;
+    display: grid; place-items: center; transition: transform .18s ease, opacity .18s ease; }
+  #sign canvas { display: block; width: 100%; height: 100%; }
+  #sign.pop { animation: pop .28s ease; }
+  @keyframes pop { from { transform: scale(.6); opacity: .2; } to { transform: scale(1); opacity: 1; } }
+  #label { font-size: 22px; font-weight: 700; letter-spacing: .08em; }
+  #kind { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .12em; }
+  #letters { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; min-height: 54px; max-width: 100%; }
+  .tile { min-width: 40px; height: 48px; padding: 0 8px; border-radius: 10px; border: 1px solid var(--line); background: #121a38;
+    display: grid; place-items: center; font: 700 24px ui-monospace, Menlo, monospace; color: var(--muted); }
+  .tile.cur { background: var(--accent); color: #05221d; border-color: var(--accent); }
+  .tile.done { color: var(--text); }
+
+  #chips { display: flex; gap: 6px; overflow-x: auto; padding: 8px 10px; scrollbar-width: none; }
+  #chips::-webkit-scrollbar { display: none; }
+  .chip { flex: none; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .chip.fs { border-style: dashed; }
+  .chip.cur { background: var(--accent); color: #05221d; border-color: var(--accent); font-weight: 700; }
+  .chip.done { color: var(--text); }
+
+  #cap { padding: 12px 14px; max-height: 24vh; overflow: hidden; }
+  #caption { font-size: 22px; font-weight: 600; line-height: 1.3; }
+  #orig { font-size: 13px; color: var(--muted); margin-top: 4px; }
+
+  #hud { display: none; font: 12px ui-monospace, Menlo, monospace; color: var(--muted); padding: 8px 12px; white-space: pre-wrap; }
+  #hud.open { display: block; }
+
+  #controls { display: flex; gap: 8px; }
+  #controls button { flex: 1; padding: 14px 8px; border-radius: 14px; border: 1px solid var(--line); background: #121a38;
+    color: var(--text); font-size: 16px; font-weight: 600; }
+  #controls button.primary { background: var(--accent); color: #05221d; border-color: var(--accent); flex: 2; }
+  #controls button.active { outline: 2px solid var(--accent); }
+  body:not(.cam) #btnFlipCam { display: none; }
+  /* Camera mode: the live camera is the background, so the big middle area (the avatar stage) must be see-through.
+     Only the small header / caption / controls bars keep a light tint so text stays readable. */
+  body.cam #stage { background: transparent; border-color: transparent;
+    backdrop-filter: none; -webkit-backdrop-filter: none; }
+  body.cam #sign { width: min(70vw, 340px); height: min(36vh, 320px); }
+  body.cam #label, body.cam #kind, body.cam .tile {
+    text-shadow: 0 1px 4px rgba(0,0,0,.9), 0 0 10px rgba(0,0,0,.6); color: #fff; }
+  body.cam #kind { color: #e5e9f7; }
+  body.cam .tile { background: rgba(18, 26, 56, .55); }
+  body.cam header.panel, body.cam #chips, body.cam #cap, body.cam #hud, body.cam #settings {
+    background: rgba(16, 22, 44, .5); }
+  body.cam #foot { text-shadow: 0 1px 3px rgba(0,0,0,.9); color: #e5e9f7; }
+  #foot { font-size: 11px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<video id="cam" autoplay playsinline muted></video>
+<div id="app">
+  <header class="panel">
+    <span id="dot"></span><span id="status">Idle</span>
+    <button id="btnHud" type="button" aria-label="Show diagnostics" aria-pressed="false">Info</button>
+    <button id="btnSettings" aria-label="Settings">&#9881;</button>
+  </header>
+
+  <section id="settings" class="panel">
+    <label>Speech language
+      <select id="srcLang">
+        <option value="auto">Auto-detect</option>
+        <option value="en">English</option><option value="hi">Hindi</option><option value="ta">Tamil</option>
+        <option value="te">Telugu</option><option value="bn">Bengali</option><option value="ar">Arabic</option>
+        <option value="zh">Chinese</option><option value="ja">Japanese</option><option value="fr">French</option>
+        <option value="es">Spanish</option>
+      </select>
+    </label>
+    <label>Caption language
+      <select id="tgtLang"><option value="en">English</option><option value="hi">Hindi</option><option value="ta">Tamil</option><option value="te">Telugu</option><option value="bn">Bengali</option></select>
+    </label>
+    <label class="wide">Microphone
+      <select id="micDevice" aria-describedby="micHelp">
+        <option value="">Default microphone</option>
+      </select>
+    </label>
+    <div id="micHelp" class="wide" style="font-size:12px;color:var(--muted)">Choose a headset microphone here. Device names may appear after allowing microphone access. Stop listening before changing inputs.</div>
+    <div id="note"></div>
+  </section>
+
+  <section id="stage" class="panel" aria-live="polite">
+    <div id="sign" aria-label="Animated sign avatar">Loading avatar…</div>
+    <div id="label">READY</div>
+    <div id="kind">sign output</div>
+    <div id="letters"></div>
+  </section>
+
+  <section id="chips" class="panel"></section>
+
+  <section id="cap" class="panel">
+    <div id="caption">Tap Start and speak.</div>
+    <div id="orig"></div>
+  </section>
+
+  <section id="hud" class="panel"></section>
+
+  <div id="controls">
+    <button id="btnStart" class="primary">Start</button>
+    <button id="btnCam" type="button" aria-pressed="false">Camera</button>
+    <button id="btnFlipCam" type="button" aria-label="Switch camera">Flip</button>
+    <button id="btnDemo">Demo</button>
+  </div>
+  <div id="foot">Robot signs and letter poses are approximate, not verified ISL.</div>
+</div>
+
+<script type="module">
+// The avatar libraries are loaded with import() inside try/catch (not static imports): if ./signkit/* or the
+// three.js CDN cannot be loaded, only the 3D avatar is lost; Start, Camera, captions and the sign chips still work.
+let resolveSignAnimation = () => null, resolveSignKitWord = () => null, SIGN_ANIMATIONS = [];
+
+// ---------------------------------------------------------------- state / DOM
+const $ = id => document.getElementById(id);
+const el = { dot: $("dot"), status: $("status"), sign: $("sign"), label: $("label"), kind: $("kind"),
+  letters: $("letters"), chips: $("chips"), caption: $("caption"), orig: $("orig"), hud: $("hud"),
+  note: $("note"), cam: $("cam") };
+let ws = null, wsWanted = false, retry = 0;
+let running = false, audioCtx = null, node = null, micStream = null, camStream = null, wakeLock = null;
+let flushMicBuffer = null;
+let chunkId = 0, sendTimes = new Map();
+const lat = [];   // recent end-to-end ms
+
+function setStatus(text, on) { el.status.textContent = text; el.dot.classList.toggle("on", !!on); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+el.kind.textContent = "loading 3D avatar";
+const avatarReady = (async () => {
+  try {
+    const [runtime, actions] = await Promise.all([
+      import("./signkit/avatar-runtime.js"),
+      import("./signkit/sign-actions.js"),
+    ]);
+    ({ resolveSignAnimation, resolveSignKitWord, SIGN_ANIMATIONS } = actions);
+    const avatar = await runtime.createSignAvatar(el.sign);
+    el.kind.textContent = "stock avatar gesture";
+    return avatar;
+  } catch (error) {
+    console.error("Unable to load the sign avatar:", error);
+    el.sign.textContent = "Avatar unavailable";
+    el.kind.textContent = "3D avatar unavailable";
+    el.note.textContent = `Avatar load failed: ${error.message}`;
+    setStatus(`Avatar failed to load (${error.message}). Captions still work.`, false);
+    return null;
+  }
+})();
+
+// ---------------------------------------------------------------- sign player
+const queue = [];
+let playing = false;
+function cueToSteps(cue) {
+  const g = String(cue.gloss || "").toUpperCase();
+  const wordSign = resolveSignKitWord(g, cue.clip);
+  if (wordSign) return { gloss: g, wordSign };
+  const animation = resolveSignAnimation(g, cue.clip);
+  if (animation) return { gloss: g, animation };
+  const sourceLetters = Array.isArray(cue.fingerspell) && cue.fingerspell.length
+    ? cue.fingerspell.join("")
+    : g;
+  return { gloss: g, letters: [...sourceLetters.toUpperCase()].filter(c => /[A-Z]/.test(c)) };
+}
+function enqueue(cues) {
+  const steps = cues.map(cueToSteps);
+  // render the gloss strip for this batch
+  steps.forEach(s => {
+    const c = document.createElement("span");
+    c.className = "chip" + (s.letters ? " fs" : "");
+    c.textContent = s.gloss;
+    s._chip = c;
+    el.chips.appendChild(c);
+  });
+  while (el.chips.children.length > 40) el.chips.removeChild(el.chips.firstChild);
+  queue.push(...steps);
+  if (!playing) play();
+}
+async function play() {
+  playing = true;
+  while (queue.length) {
+    // never let the avatar fall far behind live speech: speed up when the backlog grows
+    const speed = queue.length > 14 ? 0.4 : queue.length > 8 ? 0.6 : 1;
+    const s = queue.shift();
+    const prev = el.chips.querySelector(".cur"); if (prev) { prev.classList.remove("cur"); prev.classList.add("done"); }
+    if (s._chip) { s._chip.classList.add("cur"); s._chip.scrollIntoView({ inline: "center", block: "nearest" }); }
+    el.label.textContent = s.gloss;
+    const avatar = s.animation || s.wordSign ? await avatarReady : null;
+    if (s.wordSign && avatar) {
+      el.kind.textContent = "Sign Kit word (approximate robot motion)";
+      el.letters.textContent = "";
+      const duration = avatar.playWordSign(s.wordSign, 1 / speed);
+      el.sign.classList.remove("pop"); void el.sign.offsetWidth; el.sign.classList.add("pop");
+      await sleep(duration * 1000);
+    } else if (s.animation && avatar) {
+      el.kind.textContent = `avatar gesture: ${s.animation}`;
+      el.letters.textContent = "";
+      const duration = avatar.play(s.animation, 1 / speed);
+      el.sign.classList.remove("pop"); void el.sign.offsetWidth; el.sign.classList.add("pop");
+      await sleep(duration * 1000);
+    } else {
+      el.kind.textContent = "approximate robot fingerspelling";
+      el.letters.textContent = "";
+      const letters = s.letters || [...s.gloss].filter(c => /[A-Z]/.test(c));
+      const tiles = letters.map(ch => { const t = document.createElement("span"); t.className = "tile"; t.textContent = ch; el.letters.appendChild(t); return t; });
+      const avatar = letters.length ? await avatarReady : null;
+      const duration = avatar ? avatar.playFingerSpell(letters.join(""), 1 / speed) : 0;
+      const letterDelay = duration && tiles.length ? duration * 1000 / tiles.length : 280 * speed;
+      for (let i = 0; i < tiles.length; i++) {
+        tiles.forEach((t, j) => { t.classList.toggle("cur", j === i); t.classList.toggle("done", j < i); });
+        await sleep(letterDelay);
+      }
+      tiles.forEach(t => { t.classList.remove("cur"); t.classList.add("done"); });
+      if (!duration) await sleep(180 * speed);
+    }
+  }
+  const prev = el.chips.querySelector(".cur"); if (prev) { prev.classList.remove("cur"); prev.classList.add("done"); }
+  playing = false;
+}
+
+// ---------------------------------------------------------------- websocket
+function wsUrl() { return (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws"; }
+function sendConfig() {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "config", source_lang: $("srcLang").value, target_lang: $("tgtLang").value }));
+}
+function connect() {
+  wsWanted = true;
+  setStatus("Connecting to server…", false);
+  ws = new WebSocket(wsUrl());
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => { retry = 0; setStatus(running ? "Listening…" : "Connected", true); sendConfig(); };
+  ws.onclose = () => {
+    if (!wsWanted) return;                       // user pressed Stop: keep the "Stopped" status
+    setStatus("Server disconnected, retrying…", false);
+    setTimeout(connect, Math.min(4000, 500 * ++retry));
+  };
+  ws.onerror = () => { /* onclose follows */ };
+  ws.onmessage = ev => {
+    try {
+      const message = JSON.parse(ev.data);
+      if (message.type === "flush_ack") {
+        wsWanted = false;
+        const socket = ws;
+        ws = null;
+        if (socket) socket.close();
+        $("btnStart").disabled = false;
+        $("micDevice").disabled = false;
+        setStatus("Stopped", false);
+        return;
+      }
+      handle(message);
+    } catch (e) { console.error(e); }
+  };
+}
+function handle(m) {
+  if (m.type === "config_ack") { el.note.textContent = m.note || ""; return; }
+  if (m.type === "chunk_error") { setStatus("Chunk skipped: " + m.error, true); return; }
+  const t0 = sendTimes.get(m.id);
+  if (t0 !== undefined) { lat.push(performance.now() - t0); if (lat.length > 20) lat.shift(); sendTimes.delete(m.id); }
+  if (m.caption) {
+    el.caption.textContent = m.caption;
+    el.orig.textContent = m.lang && m.text && m.text !== m.caption ? `(${m.lang}) ${m.text}` : "";
+  }
+  if (m.cues && m.cues.length) enqueue(m.cues);
+  const med = lat.length ? Math.round([...lat].sort((a, b) => a - b)[lat.length >> 1]) : 0;
+  el.hud.textContent =
+    `chunk ${m.id}  asr ${m.asr_ms}ms  mt ${m.text_ms}ms  gloss ${m.sign_ms}ms\n` +
+    `gloss ${m.gloss_n}  lexicon hits ${m.lex_hits}  fingerspelled ${m.fingerspell_n}\n` +
+    `round-trip median ${med}ms (last ${lat.length})`;
+}
+
+// ---------------------------------------------------------------- microphone -> 16 kHz int16 chunks
+const WORKLET = `
+class Tap extends AudioWorkletProcessor {
+  process(inputs) { const ch = inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; }
+}
+registerProcessor("tap", Tap);`;
+const CHUNK_S = 0.5, TARGET = 16000;   // smaller chunks = the server notices a pause sooner (lower caption delay)
+async function refreshMicrophones() {
+  const select = $("micDevice");
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  const selectedId = select.value;
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const microphones = devices.filter(device => device.kind === "audioinput");
+  select.replaceChildren(new Option("Default microphone", ""));
+  microphones.forEach((device, index) => {
+    const option = new Option(device.label || `Microphone ${index + 1}`, device.deviceId);
+    select.add(option);
+  });
+  select.value = microphones.some(device => device.deviceId === selectedId) ? selectedId : "";
+}
+async function startMic() {
+  // Phone browsers' built-in noise suppression / echo cancellation often distort speech and hurt Whisper's accuracy.
+  // The app plays no audio, so echo cancellation is not needed; keep auto-gain so quiet voices stay audible.
+  // (If the audio gets worse or noisy in your room, set noiseSuppression back to true.)
+  const audio = { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: true };
+  const selectedDevice = $("micDevice").value;
+  if (selectedDevice) audio.deviceId = { exact: selectedDevice };
+  micStream = await navigator.mediaDevices.getUserMedia({ audio });
+  await refreshMicrophones();
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume();
+  const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
+  await audioCtx.audioWorklet.addModule(url);
+  const src = audioCtx.createMediaStreamSource(micStream);
+  node = new AudioWorkletNode(audioCtx, "tap");
+  const ratio = audioCtx.sampleRate / TARGET;
+  let buf = [], have = 0, pos = 0;               // pos: fractional read position carried across blocks
+  node.port.onmessage = e => {
+    const x = e.data;
+    // box-filter downsample to 16 kHz
+    const out = [];
+    for (; pos < x.length; pos += ratio) {
+      const a = Math.floor(pos), b = Math.min(x.length, Math.max(a + 1, Math.floor(pos + ratio)));
+      let s = 0; for (let i = a; i < b; i++) s += x[i];
+      out.push(s / (b - a));
+    }
+    pos -= x.length;
+    buf.push(Float32Array.from(out)); have += out.length;
+    if (have >= CHUNK_S * TARGET) {
+      const all = new Float32Array(have); let o = 0; for (const p of buf) { all.set(p, o); o += p.length; }
+      buf = []; have = 0;
+      sendChunk(all);
+    }
+  };
+  flushMicBuffer = () => {
+    if (!have) return;
+    const all = new Float32Array(have); let offset = 0;
+    for (const part of buf) { all.set(part, offset); offset += part.length; }
+    buf = []; have = 0;
+    sendChunk(all);
+  };
+  src.connect(node);
+}
+function sendChunk(f32) {
+  if (!ws || ws.readyState !== 1) return;
+  const pcm = new Int16Array(f32.length);
+  for (let i = 0; i < f32.length; i++) pcm[i] = Math.max(-1, Math.min(1, f32[i])) * 32767;
+  const msg = new Uint8Array(4 + pcm.byteLength);
+  new DataView(msg.buffer).setUint32(0, chunkId, true);   // 4-byte little-endian chunk id, then int16 PCM
+  msg.set(new Uint8Array(pcm.buffer), 4);
+  sendTimes.set(chunkId, performance.now());   // latency counted from chunk completion
+  ws.send(msg.buffer);
+  chunkId++;
+}
+function stopMic() {
+  if (node) {
+    if (flushMicBuffer) flushMicBuffer();
+    node.port.onmessage = null;
+    node.disconnect();
+    node = null;
+  }
+  flushMicBuffer = null;
+  if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+}
+
+// ---------------------------------------------------------------- buttons
+async function start() {
+  if (!window.isSecureContext) {
+    setStatus("Not a secure origin: open http://localhost:8000 via adb reverse (or use HTTPS)", false); return;
+  }
+  $("btnStart").disabled = true;
+  try {
+    $("micDevice").disabled = true;
+    await startMic();
+    connect();
+    running = true;
+    $("btnStart").textContent = "Stop";
+    setStatus("Listening…", true);
+    try { wakeLock = await navigator.wakeLock.request("screen"); } catch (_) { /* optional */ }
+  } catch (e) {
+    const selectedDevice = $("micDevice").value;
+    setStatus(selectedDevice
+      ? `Selected microphone unavailable: ${e.message || e.name}. Choose another device or Default microphone.`
+      : "Microphone error: " + (e.message || e.name), false);
+    stopMic();
+  } finally {
+    $("micDevice").disabled = running;
+    $("btnStart").disabled = false;
+  }
+}
+function stop() {
+  running = false; wsWanted = false;
+  stopMic();
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  $("btnStart").textContent = "Start";
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    $("btnStart").disabled = true;
+    $("micDevice").disabled = true;
+    setStatus("Finalizing speech…", false);
+    ws.send(JSON.stringify({ type: "flush" }));
+  } else {
+    if (ws) ws.close();
+    $("btnStart").disabled = false;
+    $("micDevice").disabled = false;
+    setStatus("Stopped", false);
+  }
+}
+$("btnStart").onclick = () => running ? stop() : start();
+$("btnSettings").onclick = () => $("settings").classList.toggle("open");
+if (navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener("devicechange", () => {
+    refreshMicrophones().catch(error => console.error("Unable to refresh microphone list:", error));
+  });
+}
+refreshMicrophones().catch(error => console.error("Unable to enumerate microphones:", error));
+$("btnHud").onclick = e => {
+  const open = !el.hud.classList.contains("open");
+  el.hud.classList.toggle("open", open);
+  e.currentTarget.classList.toggle("active", open);
+  e.currentTarget.setAttribute("aria-pressed", String(open));
+  e.currentTarget.setAttribute("aria-label", open ? "Hide diagnostics" : "Show diagnostics");
+  e.currentTarget.textContent = open ? "Hide" : "Info";
+};
+$("srcLang").onchange = $("tgtLang").onchange = sendConfig;
+let cameraFacing = "environment";
+function stopCamera(stopTracks = true) {
+  const stream = camStream;
+  camStream = null;
+  if (stopTracks && stream) stream.getTracks().forEach(track => track.stop());
+  el.cam.pause();
+  el.cam.srcObject = null;
+  document.body.classList.remove("cam");
+  $("btnCam").classList.remove("active");
+  $("btnCam").setAttribute("aria-pressed", "false");
+  $("btnCam").textContent = "Camera";
+}
+function cameraErrorMessage(error) {
+  if (error.name === "NotAllowedError" || error.name === "SecurityError") {
+    return "Camera permission was denied. Allow camera access in browser settings and try again.";
+  }
+  if (error.name === "NotFoundError" || error.name === "OverconstrainedError") {
+    return "No compatible camera was found on this device.";
+  }
+  if (error.name === "NotReadableError") {
+    return "The camera is busy in another app. Close it and try again.";
+  }
+  return `Camera unavailable: ${error.message || error.name}`;
+}
+async function startCamera(facing = cameraFacing) {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    setStatus("Camera requires HTTPS or localhost in a supported mobile browser.", false);
+    return;
+  }
+  const previousStream = camStream;
+  $("btnCam").disabled = true;
+  $("btnFlipCam").disabled = true;
+  setStatus("Requesting camera access…", false);
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+    el.cam.srcObject = stream;
+    await el.cam.play();
+    camStream = stream;
+    cameraFacing = facing;
+    document.body.classList.add("cam");
+    $("btnCam").classList.add("active");
+    $("btnCam").setAttribute("aria-pressed", "true");
+    $("btnCam").textContent = "Stop camera";
+    stream.getVideoTracks().forEach(track => {
+      track.addEventListener("ended", () => {
+        if (camStream === stream) stopCamera(false);
+      }, { once: true });
+    });
+    if (previousStream && previousStream !== stream) previousStream.getTracks().forEach(track => track.stop());
+    setStatus("Camera ready.", true);
+  } catch (error) {
+    if (stream && stream !== previousStream) stream.getTracks().forEach(track => track.stop());
+    if (previousStream) {
+      camStream = previousStream;
+      el.cam.srcObject = previousStream;
+      document.body.classList.add("cam");
+    } else {
+      stopCamera(false);
+    }
+    setStatus(cameraErrorMessage(error), false);
+  } finally {
+    $("btnCam").disabled = false;
+    $("btnFlipCam").disabled = false;
+  }
+}
+$("btnCam").onclick = () => camStream ? stopCamera() : startCamera();
+$("btnFlipCam").onclick = () => {
+  if (!camStream) return;
+  const nextFacing = cameraFacing === "environment" ? "user" : "environment";
+  startCamera(nextFacing);
+};
+
+// Offline backup: plays a fixed script through the same sign player, no server or mic needed.
+const DEMO = [
+  { caption: "Hello, how are you?", gloss: ["HELLO", "HOW", "YOU"] },
+  { caption: "Thank you. I want help, please.", gloss: ["THANK", "YOU", "ME", "WANT", "HELP", "PLEASE"] },
+  { caption: "Sorry, no. That is not good.", gloss: ["SORRY", "NO", "GOOD", "NOT"] },
+  { caption: "What is your name?", gloss: ["YOUR", "NAME", "WHAT"] },
+  { caption: "Namaste, Monish.", gloss: ["NAMASTE", "MONISH"] }
+];
+let demoI = 0;
+$("btnDemo").onclick = () => {
+  const d = DEMO[demoI++ % DEMO.length];
+  el.caption.textContent = d.caption; el.orig.textContent = "(local demo, no server)";
+  enqueue(d.gloss.map(g => ({ gloss: g })));
+};
+
+// quick self-test hook used by the headless test
+window.__arsign = { cueToSteps, SIGN_ANIMATIONS, avatarReady, resolveSignKitWord };
+setStatus("Idle. Tap Start.", false);
+</script>
+</body>
+</html>

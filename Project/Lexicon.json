@@ -1,0 +1,23 @@
+{
+  "HELLO": "hello",
+  "HI": "hello",
+  "YES": "yes",
+  "NO": "no",
+  "NOT": "no",
+  "THANK": "thank_you",
+  "THANKS": "thank_you",
+  "PLEASE": "please",
+  "SORRY": "sorry",
+  "YOU": "you",
+  "ME": "me",
+  "GOOD": "good",
+  "BAD": "bad",
+  "HELP": "help",
+  "WANT": "want",
+  "HOW": "how",
+  "WHAT": "what",
+  "HOME": "signkit_home",
+  "HOUSE": "signkit_home",
+  "PERSON": "signkit_person",
+  "TIME": "signkit_time"
+}

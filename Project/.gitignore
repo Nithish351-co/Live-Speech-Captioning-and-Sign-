@@ -1,0 +1,10 @@
+*.txt
+*.csv
+*.wav
+tests
+121
+237
+260
+__pycache__
+models
+.env

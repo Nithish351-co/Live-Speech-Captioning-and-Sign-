@@ -1,0 +1,276 @@
+{
+  "_readme": [
+    "HELD-OUT gloss test set (14 cases). Same JSON format as gloss_test_set.json plus a 'source' field.",
+    "",
+    "HOW THE REFERENCES WERE MADE. Every reference_gloss was derived by hand from ISL grammar",
+    "properties stated in published sources, applied to sentences that are NOT in gloss_test_set.json.",
+    "The rule-based converter (gloss.py) was NOT run on any of these sentences, and its output was not",
+    "consulted. Rules used (all stated in source [1]; the summary of [2] agrees on SOV and covers questions and fingerspelling):",
+    "  SOV       verb after its object.",
+    "  WH_FINAL  in questions the wh-word is sentence-final.",
+    "  FUNC_DROP articles, conjunctions and linking (be) verbs are not signed; 'to' is removed.",
+    "  ROOT_FORM signs use root forms: no inflection, gerunds or suffixes (plurals and tenses reduced to the root).",
+    "  ME_FOR_I  'me' is used instead of 'I'. NOTE: [1] lists this among facts about sign languages IN GENERAL, not in its ISL-specific comparison table, so cases relying on it are marked medium confidence.",
+    "Three cases (ho_pub_*) start from example sentence pairs printed in source [1] (its Table 3 and section 7.1),",
+    "then apply the same source's function-word and root-form steps.",
+    "",
+    "WHAT THIS SET CAN AND CANNOT SHOW.",
+    "It measures whether gloss.py reproduces the published rule descriptions on sentences it was not tuned on.",
+    "It does NOT measure ISL correctness. The references were written by the same person who maintains the rules,",
+    "from secondary sources (a course report and a system paper), not from the primary linguistic literature",
+    "and not checked by an ISL signer. Have a signer or the primary sources (see [3], [4]) review each",
+    "reference before quoting a score.",
+    "",
+    "DELIBERATELY EXCLUDED because the sources are silent, conflict with each other, or describe rules the",
+    "converter does not implement: negation placement, modals, tense (source [1] says tense is shown with",
+    "signs for before/then/after), the male/female prefix on family-relation signs, numerals, plural handling,",
+    "prepositions other than 'to', and all non-manual markers. Report these as known limitations.",
+    "",
+    "USAGE RULE. Run this set once and report the result as it comes out. Do not tune gloss.py against it.",
+    "If you fix rules after seeing failures, say so and evaluate the fixed rules on a NEW set.",
+    "",
+    "SOURCES",
+    "[1] Gupta, Sinha, Bhushan, Shettigar. 'English Text to Indian Sign Language Translator'. COEN 296B course",
+    "    report, Santa Clara University (student report, not peer reviewed).",
+    "    https://www.cse.scu.edu/~m1wang/projects/NLP_English2IndianSignLanuguage_18w.pdf",
+    "[2] 'Sign Language Generation System Based on Indian Sign Language Grammar', ACM Transactions on Asian and",
+    "    Low-Resource Language Information Processing, doi 10.1145/3384202 (full text could not be opened when",
+    "    this file was written; only its search-result summary was read).",
+    "[3] Vasishta, Woodward, DeSantis. 'An Introduction to Indian Sign Language'. All India Federation of the Deaf",
+    "    (3rd ed.); cited by [1]. Not read.",
+    "[4] Zeshan, Vasishta, Sethna (2005). 'Implementation of Indian Sign Language in educational settings'.",
+    "    Asia Pacific Disability Rehabilitation Journal 16(1), 16-40; cited by [1]. Not read."
+  ],
+  "cases": [
+    {
+      "id": "ho_pub_go_school",
+      "text": "Go to school.",
+      "reference_gloss": [
+        "SCHOOL",
+        "GO"
+      ],
+      "rules_tested": [
+        "SOV",
+        "FUNC_DROP"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 3 gives 'Go to school' -> 'School to go'; its stop-word step then removes 'to'.",
+      "note": "Imperative. Published example pair."
+    },
+    {
+      "id": "ho_pub_birds_fly",
+      "text": "Birds fly.",
+      "reference_gloss": [
+        "BIRD",
+        "FLY"
+      ],
+      "rules_tested": [
+        "SOV",
+        "ROOT_FORM"
+      ],
+      "confidence": "medium",
+      "source": "[1] Table 3 gives 'Birds fly' -> 'Birds fly'; root-form rule gives the singular.",
+      "note": "Source [1] is internally inconsistent here: its stop-word list also removes plural nouns. Reference follows the root-form rule."
+    },
+    {
+      "id": "ho_pub_university",
+      "text": "I am going to the university.",
+      "reference_gloss": [
+        "ME",
+        "UNIVERSITY",
+        "GO"
+      ],
+      "rules_tested": [
+        "SOV",
+        "BE_DROP",
+        "FUNC_DROP",
+        "ROOT_FORM",
+        "PRONOUN"
+      ],
+      "confidence": "medium",
+      "source": "[1] section 7.1 shows 'I am going to the University' -> 'I University going'; then root form, and 'me' for 'I' per its list of ISL facts.",
+      "note": "Published example, with the source's own later steps applied. 'Me' for 'I' is stated for sign languages in general in [1], not in its ISL-specific table."
+    },
+    {
+      "id": "ho_going_where",
+      "text": "Where are you going?",
+      "reference_gloss": [
+        "YOU",
+        "GO",
+        "WHERE"
+      ],
+      "rules_tested": [
+        "WH_FINAL",
+        "BE_DROP",
+        "ROOT_FORM"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 2: question word is always sentence-final in ISL; linking verbs not used; root forms.",
+      "note": "Wh-question with a progressive verb."
+    },
+    {
+      "id": "ho_boy_reading",
+      "text": "The boy is reading a book.",
+      "reference_gloss": [
+        "BOY",
+        "BOOK",
+        "READ"
+      ],
+      "rules_tested": [
+        "SOV",
+        "BE_DROP",
+        "FUNC_DROP",
+        "ROOT_FORM"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 2: SOV; no articles or linking verbs; root forms.",
+      "note": ""
+    },
+    {
+      "id": "ho_he_milk",
+      "text": "He drinks milk.",
+      "reference_gloss": [
+        "HE",
+        "MILK",
+        "DRINK"
+      ],
+      "rules_tested": [
+        "SOV",
+        "ROOT_FORM"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 2: SOV; root forms (no inflection).",
+      "note": ""
+    },
+    {
+      "id": "ho_she_doctor",
+      "text": "She is a doctor.",
+      "reference_gloss": [
+        "SHE",
+        "DOCTOR"
+      ],
+      "rules_tested": [
+        "BE_DROP",
+        "FUNC_DROP"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 2: no linking verbs or articles.",
+      "note": "No content verb remains, so nothing moves to clause-final position."
+    },
+    {
+      "id": "ho_rice_dal",
+      "text": "We eat rice and dal.",
+      "reference_gloss": [
+        "WE",
+        "RICE",
+        "DAL",
+        "EAT"
+      ],
+      "rules_tested": [
+        "SOV",
+        "CONJ_DROP"
+      ],
+      "confidence": "medium",
+      "source": "[1] Table 2: no conjunctions; SOV.",
+      "note": "'dal' may be mis-tagged by a general-English tagger; that would be a tagger limitation, not a rule error."
+    },
+    {
+      "id": "ho_dogs_barking",
+      "text": "The dogs are barking.",
+      "reference_gloss": [
+        "DOG",
+        "BARK"
+      ],
+      "rules_tested": [
+        "BE_DROP",
+        "FUNC_DROP",
+        "ROOT_FORM"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 2: no articles or linking verbs; root forms (plural and -ing removed).",
+      "note": ""
+    },
+    {
+      "id": "ho_who_teacher",
+      "text": "Who is your teacher?",
+      "reference_gloss": [
+        "YOUR",
+        "TEACHER",
+        "WHO"
+      ],
+      "rules_tested": [
+        "WH_FINAL",
+        "BE_DROP",
+        "PRONOUN"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 2: question word sentence-final; no linking verbs.",
+      "note": ""
+    },
+    {
+      "id": "ho_why_leave",
+      "text": "Why did she leave?",
+      "reference_gloss": [
+        "SHE",
+        "LEAVE",
+        "WHY"
+      ],
+      "rules_tested": [
+        "WH_FINAL",
+        "DO_SUPPORT",
+        "ROOT_FORM"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 2: question word sentence-final; root forms (no past-tense inflection); auxiliary 'did' is a function word.",
+      "note": ""
+    },
+    {
+      "id": "ho_what_eat",
+      "text": "What do you eat?",
+      "reference_gloss": [
+        "YOU",
+        "EAT",
+        "WHAT"
+      ],
+      "rules_tested": [
+        "WH_FINAL",
+        "DO_SUPPORT"
+      ],
+      "confidence": "high",
+      "source": "[1] Table 2: question word sentence-final.",
+      "note": ""
+    },
+    {
+      "id": "ho_want_water",
+      "text": "I want water.",
+      "reference_gloss": [
+        "ME",
+        "WATER",
+        "WANT"
+      ],
+      "rules_tested": [
+        "SOV",
+        "PRONOUN"
+      ],
+      "confidence": "medium",
+      "source": "[1] Table 2: SOV; 'me' used instead of 'I'.",
+      "note": "'Me' for 'I' is stated for sign languages in general in [1], not in its ISL-specific table."
+    },
+    {
+      "id": "ho_children_playing",
+      "text": "The children are playing.",
+      "reference_gloss": [
+        "CHILD",
+        "PLAY"
+      ],
+      "rules_tested": [
+        "BE_DROP",
+        "FUNC_DROP",
+        "ROOT_FORM"
+      ],
+      "confidence": "medium",
+      "source": "[1] Table 2: root forms; no linking verbs or articles.",
+      "note": "Irregular plural 'children' depends on the lemmatizer; medium confidence for that reason only."
+    }
+  ]
+}

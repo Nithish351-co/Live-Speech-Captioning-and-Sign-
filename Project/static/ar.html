@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AR Sign Captioning - Step 2</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #111; font-family: system-ui, sans-serif; }
+  #cam { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; display: none; }
+  canvas { position: fixed; inset: 0; }
+  #ui { position: fixed; top: 10px; left: 10px; z-index: 5; display: flex; gap: 6px; flex-wrap: wrap; max-width: 95vw; }
+  #ui button { padding: .4rem .8rem; }
+  #ui select { padding: .35rem; }
+  #gloss { position: fixed; bottom: 10px; left: 10px; z-index: 5; color: #9ad; font-size: 14px; }
+  #note { position: fixed; bottom: 32px; left: 10px; z-index: 5; color: #fc8; font-size: 13px; max-width: 90vw; }
+  #signWarning { position: fixed; bottom: 50px; left: 10px; z-index: 5; color: #fc8; font-size: 12px; max-width: 90vw; }
+  #stats { position: fixed; top: 10px; right: 10px; z-index: 5; color: #ddd; font-size: 13px; text-align: right; }
+  #miclvl { position: fixed; top: 40px; right: 10px; z-index: 5; color: #9f9; font-size: 13px; text-align: right; }
+</style>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans&family=Noto+Sans+Devanagari&family=Noto+Sans+Tamil&family=Noto+Sans+Telugu&family=Noto+Sans+Bengali&family=Noto+Sans+Arabic&family=Noto+Sans+SC&family=Noto+Sans+JP&display=swap" rel="stylesheet">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<video id="cam" autoplay muted playsinline></video>
+<div id="ui">
+  <label style="color:#ddd;font-size:13px">Speaker <select id="srcLang"></select></label>
+  <label style="color:#ddd;font-size:13px">Captions <select id="tgtLang"></select></label>
+  <button id="start">Start</button>
+  <button id="stop" disabled>Stop</button>
+  <button id="camBtn">Camera bg</button>
+  <button id="csv">Latency CSV</button>
+  <button data-clip="hello">Test: hello</button>
+  <button data-clip="yes">Test: yes</button>
+  <button data-clip="no">Test: no</button>
+  <button data-clip="thank_you">Test: thank you</button>
+  <button data-clip="please">Test: please</button>
+  <button data-clip="help">Test: help</button>
+  <button data-clip="abc">Test: fingerspell</button>
+</div>
+<div id="stats">last chunk: - ms</div>
+<div id="miclvl">mic: -</div>
+<div id="note"></div>
+<div id="signWarning">Approximate robot letter poses and stock gestures are not verified ISL signs.</div>
+<div id="gloss"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { loadSignAvatar } from './signkit/avatar-runtime.js';
+import { resolveSignAnimation } from './signkit/sign-actions.js';
+
+/* ---------------- config ---------------- */
+const CHUNK_SECONDS = 1;
+const SAMPLE_RATE = 16000;
+const LANGS = [['en','English'],['hi','Hindi'],['ta','Tamil'],['te','Telugu'],['bn','Bengali'],['ar','Arabic'],['zh','Chinese'],['ja','Japanese'],['fr','French'],['es','Spanish']];
+const srcSel = document.getElementById('srcLang'), tgtSel = document.getElementById('tgtLang');
+srcSel.add(new Option('Auto-detect', 'auto'));
+for (const [c, n] of LANGS) { srcSel.add(new Option(n, c)); tgtSel.add(new Option(n, c)); }
+srcSel.value = 'en'; tgtSel.value = 'en';
+
+/* ---------------- scene ---------------- */
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 50);
+camera.position.set(0, 0.5, 3.4);
+camera.lookAt(0, 0.5, 0);
+scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+dir.position.set(1, 2, 3);
+scene.add(dir);
+
+const root = new THREE.Group();
+scene.add(root);
+
+/* ---------------- caption plane ---------------- */
+const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 256;
+const ctx = cv.getContext('2d');
+const tex = new THREE.CanvasTexture(cv);
+const captionPlane = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.6, 0.4),
+  new THREE.MeshBasicMaterial({ map: tex, transparent: true })
+);
+captionPlane.position.set(0, -0.65, 0.2);
+root.add(captionPlane);
+
+const RTL = new Set(['ar', 'he', 'fa', 'ur']);
+const FONT_STACK = '"Noto Sans","Noto Sans Devanagari","Noto Sans Tamil","Noto Sans Telugu","Noto Sans Bengali","Noto Sans Arabic","Noto Sans SC","Noto Sans JP","Nirmala UI","Segoe UI",sans-serif';
+let captionText = '', captionLang = 'en';
+
+function segments(text, lang) {
+  // Word segmentation that also works for languages written without spaces (zh, ja, th)
+  if (typeof Intl !== 'undefined' && Intl.Segmenter)
+    return [...new Intl.Segmenter(lang, { granularity: 'word' }).segment(text)].map(s => s.segment);
+  return text.split(/(\s+)/);
+}
+function drawCaption() {
+  ctx.clearRect(0, 0, 1024, 256);
+  ctx.fillStyle = 'rgba(0,0,0,0.65)'; ctx.fillRect(0, 0, 1024, 256);
+  const rtl = RTL.has(captionLang);
+  ctx.direction = rtl ? 'rtl' : 'ltr';
+  ctx.textAlign = rtl ? 'right' : 'left';
+  ctx.fillStyle = '#fff'; ctx.font = `44px ${FONT_STACK}`; ctx.textBaseline = 'top';
+  const lines = []; let line = '';
+  for (const seg of segments(captionText.trim(), captionLang)) {
+    const test = line + seg;
+    if (ctx.measureText(test).width > 960 && line.trim()) { lines.push(line.trim()); line = seg.trimStart(); }
+    else line = test;
+  }
+  if (line.trim()) lines.push(line.trim());
+  const x = rtl ? 992 : 32;
+  lines.slice(-3).forEach((l, i) => ctx.fillText(l, x, 24 + i * 72));
+  tex.needsUpdate = true;
+}
+function appendCaption(text) {
+  captionText = (captionText + ' ' + text).slice(-300);
+  drawCaption();
+  // make sure script-specific web fonts are loaded, then redraw
+  document.fonts.load(`44px ${FONT_STACK}`, text).then(drawCaption).catch(() => {});
+}
+drawCaption();
+
+/* ---------------- blending sequencer ---------------- */
+// Pose = joint -> [x, y, z] Euler angles (radians).
+const REST = { rSh: [0, 0, 0.1], rEl: [0, 0, 0], lSh: [0, 0, -0.1], lEl: [0, 0, 0] };
+const P = (o) => ({ ...REST, ...o });
+
+// PLACEHOLDER gestures to test the pipeline. These are NOT real ISL signs -
+// they exist so the sequencer/cue-builder/lexicon-coverage pipeline can be
+// demoed and measured end to end. Swap in real ISLRTC-sourced clips before
+// any claim in the paper about sign accuracy.
+const CLIPS = {
+  hello: { duration: 1.6, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.3, pose: P({ rSh: [0, 0, 2.3], rEl: [0, 0, 0.4] }) },
+    { t: 0.6, pose: P({ rSh: [0, 0, 2.3], rEl: [0, 0, -0.4] }) },
+    { t: 0.9, pose: P({ rSh: [0, 0, 2.3], rEl: [0, 0, 0.4] }) },
+    { t: 1.2, pose: P({ rSh: [0, 0, 2.3], rEl: [0, 0, -0.4] }) },
+    { t: 1.6, pose: REST } ] },
+  yes: { duration: 1.2, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.3, pose: P({ rSh: [-0.9, 0, 0.2], rEl: [-1.4, 0, 0] }) },
+    { t: 0.6, pose: P({ rSh: [-0.6, 0, 0.2], rEl: [-1.4, 0, 0] }) },
+    { t: 0.9, pose: P({ rSh: [-0.9, 0, 0.2], rEl: [-1.4, 0, 0] }) },
+    { t: 1.2, pose: REST } ] },
+  no: { duration: 1.0, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.25, pose: P({ rSh: [-0.5, 0, 0.6], rEl: [-0.2, 0, 0] }) },
+    { t: 0.5, pose: P({ rSh: [-0.5, 0, -0.3], rEl: [-0.2, 0, 0] }) },
+    { t: 0.75, pose: P({ rSh: [-0.5, 0, 0.6], rEl: [-0.2, 0, 0] }) },
+    { t: 1.0, pose: REST } ] },
+  thank_you: { duration: 1.4, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.5, pose: P({ rSh: [-1.2, 0, 0.1], rEl: [-1.6, 0, 0] }) },
+    { t: 1.0, pose: P({ rSh: [-0.6, 0, 0.3], rEl: [-0.3, 0, 0] }) },
+    { t: 1.4, pose: REST } ] },
+  please: { duration: 1.4, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.4, pose: P({ rSh: [-0.7, 0.3, 0.2], rEl: [-0.5, 0, 0] }) },
+    { t: 0.8, pose: P({ rSh: [-0.7, -0.3, 0.2], rEl: [-0.5, 0, 0] }) },
+    { t: 1.4, pose: REST } ] },
+  sorry: { duration: 1.4, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.4, pose: P({ rSh: [-0.7, 0.4, 0.4], rEl: [-0.4, 0, 0] }) },
+    { t: 0.8, pose: P({ rSh: [-0.7, -0.4, 0.4], rEl: [-0.4, 0, 0] }) },
+    { t: 1.4, pose: REST } ] },
+  you: { duration: 0.9, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.35, pose: P({ rSh: [-0.9, 0, 0], rEl: [-0.1, 0, 0] }) },
+    { t: 0.6, pose: P({ rSh: [-0.9, 0, 0], rEl: [-0.1, 0, 0] }) },
+    { t: 0.9, pose: REST } ] },
+  me: { duration: 0.9, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.35, pose: P({ rSh: [-0.5, 0, -0.9], rEl: [-1.6, 0, 0] }) },
+    { t: 0.6, pose: P({ rSh: [-0.5, 0, -0.9], rEl: [-1.6, 0, 0] }) },
+    { t: 0.9, pose: REST } ] },
+  good: { duration: 1.1, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.4, pose: P({ rSh: [-1.0, 0, 0.1], rEl: [-1.5, 0, 0] }) },
+    { t: 0.7, pose: P({ rSh: [-0.2, 0, 0.1], rEl: [-0.2, 0, 0] }) },
+    { t: 1.1, pose: REST } ] },
+  bad: { duration: 1.1, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.4, pose: P({ rSh: [-1.0, 0, 0.1], rEl: [-1.5, 0, 0] }) },
+    { t: 0.7, pose: P({ rSh: [0.3, 0, 0.1], rEl: [0.4, 0, 0] }) },
+    { t: 1.1, pose: REST } ] },
+  help: { duration: 1.3, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.4, pose: P({ rSh: [-0.4, 0, 0.1], rEl: [-0.2, 0, 0], lSh: [-0.4, 0, -0.1], lEl: [-0.2, 0, 0] }) },
+    { t: 0.8, pose: P({ rSh: [-0.9, 0, 0.1], rEl: [-0.2, 0, 0], lSh: [-0.9, 0, -0.1], lEl: [-0.2, 0, 0] }) },
+    { t: 1.3, pose: REST } ] },
+  want: { duration: 1.1, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.4, pose: P({ rSh: [-0.6, 0, 0.15], rEl: [-1.0, 0, 0], lSh: [-0.6, 0, -0.15], lEl: [-1.0, 0, 0] }) },
+    { t: 0.75, pose: P({ rSh: [-0.3, 0, 0.15], rEl: [-1.5, 0, 0], lSh: [-0.3, 0, -0.15], lEl: [-1.5, 0, 0] }) },
+    { t: 1.1, pose: REST } ] },
+  how: { duration: 1.2, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.4, pose: P({ rSh: [-0.7, 0, 0.3], rEl: [-1.4, 0, 0], lSh: [-0.7, 0, -0.3], lEl: [-1.4, 0, 0] }) },
+    { t: 0.8, pose: P({ rSh: [-0.5, 0, 0.6], rEl: [-1.0, 0, 0], lSh: [-0.5, 0, -0.6], lEl: [-1.0, 0, 0] }) },
+    { t: 1.2, pose: REST } ] },
+  what: { duration: 1.0, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.35, pose: P({ rSh: [-0.4, 0, 0.5], rEl: [-0.3, 0, 0], lSh: [-0.4, 0, -0.5], lEl: [-0.3, 0, 0] }) },
+    { t: 0.65, pose: P({ rSh: [-0.4, 0, -0.2], rEl: [-0.3, 0, 0], lSh: [-0.4, 0, 0.2], lEl: [-0.3, 0, 0] }) },
+    { t: 1.0, pose: REST } ] },
+  // Generic fingerspelling placeholder: a small held wrist wobble, distinct from
+  // any real sign, that plays once per out-of-lexicon word while its letters are
+  // spelled out as text under the gloss line (see appendFingerspell).
+  fingerspell: { duration: 0.7, keys: [
+    { t: 0.0, pose: REST },
+    { t: 0.18, pose: P({ rSh: [-0.5, 0, 0.15], rEl: [-1.1, 0.3, 0] }) },
+    { t: 0.36, pose: P({ rSh: [-0.5, 0, 0.15], rEl: [-1.1, -0.3, 0] }) },
+    { t: 0.54, pose: P({ rSh: [-0.5, 0, 0.15], rEl: [-1.1, 0.3, 0] }) },
+    { t: 0.7, pose: REST } ] },
+};
+
+const clonePose = (p) => JSON.parse(JSON.stringify(p));
+const lerpPose = (a, b, k) => {
+  const o = {};
+  for (const j in a) o[j] = a[j].map((v, i) => v + (b[j][i] - v) * k);
+  return o;
+};
+function sample(clip, t) {
+  const ks = clip.keys;
+  for (let i = 0; i < ks.length - 1; i++) {
+    if (t <= ks[i + 1].t) {
+      const k = (t - ks[i].t) / (ks[i + 1].t - ks[i].t);
+      return lerpPose(ks[i].pose, ks[i + 1].pose, Math.max(0, k));
+    }
+  }
+  return ks[ks.length - 1].pose;
+}
+
+class Sequencer {
+  constructor() { this.queue = []; this.avatar = null; this.remaining = 0; }
+  enqueue(cue) { this.queue.push(cue); }
+  update(dt) {
+    if (this.remaining > 0) this.remaining = Math.max(0, this.remaining - dt);
+    if (this.remaining || !this.avatar || !this.queue.length) return;
+    const cue = this.queue.shift();
+    const gloss = String(cue.gloss || '').toUpperCase();
+    const clip = resolveSignAnimation(gloss, cue.clip);
+    if (clip) {
+      this.remaining = this.avatar.play(clip);
+      return;
+    }
+    const letters = String(cue.letters || gloss).replace(/[^A-Z]/g, '');
+    if (letters) this.remaining = this.avatar.playFingerSpell(letters);
+  }
+}
+const seq = new Sequencer();
+loadSignAvatar(root).then(avatar => {
+  avatar.model.scale.setScalar(0.3);
+  seq.avatar = avatar;
+}).catch(error => {
+  console.error('Unable to load the sign avatar:', error);
+  document.getElementById('note').textContent = `Avatar load failed: ${error.message}`;
+});
+document.querySelectorAll('[data-clip]').forEach(b => b.onclick = () => {
+  const gloss = String(b.dataset.clip).toUpperCase().replace(/[^A-Z]/g, '');
+  seq.enqueue({ gloss });
+});
+
+/* ---------------- render loop ---------------- */
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = clock.getDelta();
+  seq.update(dt);
+  seq.avatar?.update(dt);
+  renderer.render(scene, camera);
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// AR (phone) - only offered if the device supports it. Needs HTTPS off-localhost.
+navigator.xr?.isSessionSupported('immersive-ar').then(ok => {
+  if (ok) document.body.appendChild(ARButton.createButton(renderer));
+});
+renderer.xr.addEventListener('sessionstart', () => root.position.set(0, 0, -1.6));
+renderer.xr.addEventListener('sessionend', () => root.position.set(0, 0, 0));
+
+/* ---------------- camera background (desktop stand-in for AR) ---------------- */
+const cam = document.getElementById('cam');
+let camOn = false;
+document.getElementById('camBtn').onclick = async () => {
+  if (!camOn) {
+    cam.srcObject = await navigator.mediaDevices.getUserMedia({ video: true });
+    cam.style.display = 'block'; camOn = true;
+  } else {
+    cam.srcObject.getTracks().forEach(t => t.stop()); cam.style.display = 'none'; camOn = false;
+  }
+};
+
+/* ---------------- audio + websocket (same protocol as Step 1) ---------------- */
+let ws, actx, stream, node, chunkId = 0;
+const sentAt = new Map();
+const rows = [];
+const workletCode = `
+class Grabber extends AudioWorkletProcessor {
+  process(inputs) { const ch = inputs[0][0]; if (ch) this.port.postMessage(ch.slice()); return true; }
+}
+registerProcessor('grabber', Grabber);`;
+
+document.getElementById('start').onclick = async () => {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'config_ack') { document.getElementById('note').textContent = m.note || ''; return; }
+    if (m.type === 'chunk_error') {
+      // Server skipped this one chunk and kept the pipeline alive; nothing to render.
+      console.warn('[server] skipped chunk', m.id, m.error);
+      return;
+    }
+    const e2e = performance.now() - sentAt.get(m.id);
+    if (m.caption) appendCaption(m.caption);
+    const spelled = [];
+    for (const c of m.cues || []) {
+      const letters = Array.isArray(c.fingerspell) ? c.fingerspell.join('') : '';
+      seq.enqueue({ gloss: c.gloss, letters });
+      if (letters) spelled.push(letters.split('').join('-'));
+    }
+    const glossEl = document.getElementById('gloss');
+    let line = m.gloss && m.gloss.length ? 'gloss: ' + m.gloss.join(' ') : '';
+    if (spelled.length) line += (line ? '  |  ' : '') + 'fingerspell: ' + spelled.join(' ');
+    if (line) glossEl.textContent = line;
+    rows.push([m.id, m.asr_ms, m.text_ms, m.sign_ms, e2e.toFixed(1), m.text.length, m.gloss_n, m.lex_hits, m.fingerspell_n]);
+    document.getElementById('stats').textContent = `asr ${m.asr_ms} ms | text ${m.text_ms} | sign ${m.sign_ms} | e2e ${e2e.toFixed(0)} ms | lex ${m.lex_hits}/${m.gloss_n}`;
+  };
+  await new Promise(r => ws.onopen = r);
+  captionLang = tgtSel.value;
+  ws.send(JSON.stringify({ type: 'config', source_lang: srcSel.value, target_lang: tgtSel.value }));
+  srcSel.disabled = tgtSel.disabled = true;
+
+  stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true } });
+  actx = new AudioContext({ sampleRate: SAMPLE_RATE });
+  await actx.audioWorklet.addModule(URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' })));
+  const src = actx.createMediaStreamSource(stream);
+  node = new AudioWorkletNode(actx, 'grabber');
+  src.connect(node);
+
+  let buf = [], n = 0;
+  let micPeak = 0, micLastPaint = 0;
+  node.port.onmessage = (e) => {
+    buf.push(e.data); n += e.data.length;
+    // Live mic-level meter: independent of the 2s chunking/network round trip,
+    // so a silent mic shows up here immediately instead of only after the
+    // server tells you a chunk decoded to all zeros.
+    for (let i = 0; i < e.data.length; i++) { const a = Math.abs(e.data[i]); if (a > micPeak) micPeak = a; }
+    const now = performance.now();
+    if (now - micLastPaint > 200) {
+      const el = document.getElementById('miclvl');
+      el.textContent = `mic peak: ${micPeak.toFixed(4)}`;
+      el.style.color = micPeak < 0.001 ? '#f66' : '#9f9';
+      micPeak = 0; micLastPaint = now;
+    }
+    if (n >= CHUNK_SECONDS * SAMPLE_RATE) {
+      const pcm = new Int16Array(n);
+      let o = 0;
+      for (const f of buf) for (let i = 0; i < f.length; i++) pcm[o++] = Math.max(-1, Math.min(1, f[i])) * 32767;
+      const msg = new Uint8Array(4 + pcm.byteLength);
+      new DataView(msg.buffer).setUint32(0, chunkId, true);
+      msg.set(new Uint8Array(pcm.buffer), 4);
+      sentAt.set(chunkId, performance.now());
+      ws.send(msg);
+      chunkId++; buf = []; n = 0;
+    }
+  };
+  document.getElementById('start').disabled = true;
+  document.getElementById('stop').disabled = false;
+};
+
+document.getElementById('stop').onclick = () => {
+  stream.getTracks().forEach(t => t.stop()); actx.close(); ws.close();
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
+  srcSel.disabled = tgtSel.disabled = false;
+};
+
+document.getElementById('csv').onclick = () => {
+  const csv = 'chunk,asr_ms,text_ms,sign_ms,e2e_ms,text_len,gloss_n,lex_hits,fingerspell_n\n' + rows.map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'latency.csv'; a.click();
+};
+</script>
+</body>
+</html>

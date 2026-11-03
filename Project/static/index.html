@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AR Sign Captioning - Step 1</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+  button { padding: .5rem 1rem; margin-right: .5rem; }
+  #transcript { min-height: 5rem; padding: 1rem; margin: 1rem 0; border: 1px solid #888; border-radius: 8px; font-size: 1.3rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  td, th { border: 1px solid #888; padding: 4px 8px; text-align: right; }
+</style>
+</head>
+<body>
+<h2>Live captioning: Step 1</h2>
+<button id="start">Start</button>
+<button id="stop" disabled>Stop</button>
+<button id="csv">Download latency CSV</button>
+<div id="transcript"></div>
+<table>
+  <thead><tr><th>chunk</th><th>asr_ms</th><th>e2e_ms (after chunk end)</th></tr></thead>
+  <tbody id="log"></tbody>
+</table>
+
+<script>
+const CHUNK_SECONDS = 2;          // tunable: a key parameter for your latency experiments
+const SAMPLE_RATE = 16000;
+let ws, ctx, stream, node, chunkId = 0;
+const sentAt = new Map();          // chunk id -> capture-end timestamp
+const rows = [];                   // for CSV
+
+const workletCode = `
+class Grabber extends AudioWorkletProcessor {
+  process(inputs) {
+    const ch = inputs[0][0];
+    if (ch) this.port.postMessage(ch.slice());
+    return true;
+  }
+}
+registerProcessor('grabber', Grabber);`;
+
+document.getElementById('start').onclick = async () => {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    const e2e = performance.now() - sentAt.get(m.id);
+    if (m.text) document.getElementById('transcript').textContent += m.text + ' ';
+    rows.push([m.id, m.asr_ms, e2e.toFixed(1), m.text.length]);
+    document.getElementById('log').insertAdjacentHTML('afterbegin',
+      `<tr><td>${m.id}</td><td>${m.asr_ms}</td><td>${e2e.toFixed(0)}</td></tr>`);
+  };
+  await new Promise(r => ws.onopen = r);
+
+  stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true } });
+  ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+  const url = URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' }));
+  await ctx.audioWorklet.addModule(url);
+  const src = ctx.createMediaStreamSource(stream);
+  node = new AudioWorkletNode(ctx, 'grabber');
+  src.connect(node);
+
+  let buf = [], n = 0;
+  node.port.onmessage = (e) => {
+    buf.push(e.data); n += e.data.length;
+    if (n >= CHUNK_SECONDS * SAMPLE_RATE) {
+      const pcm = new Int16Array(n);
+      let o = 0;
+      for (const f of buf) for (let i = 0; i < f.length; i++)
+        pcm[o++] = Math.max(-1, Math.min(1, f[i])) * 32767;
+      const msg = new Uint8Array(4 + pcm.byteLength);
+      new DataView(msg.buffer).setUint32(0, chunkId, true);
+      msg.set(new Uint8Array(pcm.buffer), 4);
+      sentAt.set(chunkId, performance.now());
+      ws.send(msg);
+      chunkId++; buf = []; n = 0;
+    }
+  };
+  document.getElementById('start').disabled = true;
+  document.getElementById('stop').disabled = false;
+};
+
+document.getElementById('stop').onclick = () => {
+  stream.getTracks().forEach(t => t.stop());
+  ctx.close(); ws.close();
+  document.getElementById('start').disabled = false;
+  document.getElementById('stop').disabled = true;
+};
+
+document.getElementById('csv').onclick = () => {
+  const csv = 'chunk,asr_ms,e2e_ms,text_len\n' + rows.map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'latency.csv'; a.click();
+};
+</script>
+</body>
+</html>
